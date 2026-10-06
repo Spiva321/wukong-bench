@@ -1,0 +1,22 @@
+# Сборка .NET
+bin/
+obj/
+publish/
+
+# Отчёты инструмента (создаются на рабочем столе, но могут попасть сюда)
+WukongBench/results/
+WukongBench/*.txt
+
+# Конфиги и результаты бенчмарка — это данные конкретной машины, не код
+samples/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# ОС
+.DS_Store
+Thumbs.db
