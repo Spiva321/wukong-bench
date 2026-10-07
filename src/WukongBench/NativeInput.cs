@@ -41,6 +41,9 @@ public sealed class NativeInput
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextW(IntPtr hWnd, char[] text, int maxCount);
+
     [DllImport("user32.dll")]
     private static extern bool GetClientRect(IntPtr hWnd, out Rect rect);
 
@@ -131,6 +134,19 @@ public sealed class NativeInput
 
     public static bool IsForeground(IntPtr window) =>
         IsSupported && window != IntPtr.Zero && GetForegroundWindow() == window;
+
+    /// <summary>
+    /// Заголовок окна. Он меняется при переходе между экранами игры, поэтому позволяет
+    /// понять, на каком этапе бенчмарк находится сейчас.
+    /// </summary>
+    public static string GetWindowTitle(IntPtr window)
+    {
+        if (!IsSupported || window == IntPtr.Zero) return "";
+
+        var buffer = new char[512];
+        var length = GetWindowTextW(window, buffer, buffer.Length);
+        return length > 0 ? new string(buffer, 0, length) : "(без заголовка)";
+    }
 
     /// <summary>
     /// Клик в точке окна, заданной долями клиентской области. Доли, а не пиксели:

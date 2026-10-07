@@ -30,11 +30,10 @@ public sealed class BenchmarkRunner
     public static readonly TimeSpan Timeout = TimeSpan.FromMinutes(20);
 
     /// <summary>
-    /// Сколько ждать перед запросом на закрытие окна. Сам тест идёт около 140 секунд
-    /// (проверено на реальном результате), плюс загрузка сцен и меню. Запас сверху большой,
-    /// потому что лишние полминуты ничего не стоят, а недостающие означают пустой JSON.
+    /// Минимальное время до попытки закрыть окно. Тест идёт около 140 секунд по данным
+    /// кадров, плюс загрузка сцен и меню — раньше закрывать нельзя, иначе тест оборвётся.
     /// </summary>
-    private static readonly TimeSpan WaitBeforeClose = TimeSpan.FromSeconds(200);
+    private static readonly TimeSpan MinimumRunDuration = TimeSpan.FromSeconds(150);
 
     private readonly string _resultsDir;
     private readonly Action<string> _log;
@@ -141,6 +140,9 @@ public sealed class BenchmarkRunner
         var step = 0;
         var userTouchedMouse = false;
         var closeRequested = false;
+        var lastTitle = "";
+        var shotDir = Path.Combine(Path.GetTempPath(), "wukongbench-shots", DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
+        var lastShot = DateTime.MinValue;
 
         while (DateTime.UtcNow < deadline)
         {
@@ -159,28 +161,50 @@ public sealed class BenchmarkRunner
             {
                 if (!NativeInput.IsForeground(window)) NativeInput.TryActivate(window);
 
+                // Заголовок окна меняется при смене экрана — это наш главный признак,
+                // что бенчмарк продвинулся дальше, а не застрял.
+                var title = NativeInput.GetWindowTitle(window);
+                if (title != lastTitle)
+                {
+                    _log($"  окно: {title}");
+                    lastTitle = title;
+                }
+
                 if (NativeInput.IsForeground(window))
                 {
                     var elapsed = DateTime.UtcNow - runStart;
 
-                    // Тест идёт около 2,5 минут плюс загрузка. Ждём запас, затем просим
-                    // окно закрыться штатно — именно при выходе игра дописывает JSON.
-                    if (!closeRequested && elapsed > WaitBeforeClose)
+                    // Диагностика: снимаем экран раз в 20 секунд, чтобы видеть, где застряли.
+                    if (DateTime.UtcNow - lastShot > TimeSpan.FromSeconds(20))
                     {
-                        _log($"Прошло {elapsed.TotalSeconds:F0} с, прошу окно закрыться штатно, " +
-                             "чтобы бенчмарк записал результат.");
+                        lastShot = DateTime.UtcNow;
+                        var shot = ScreenCapture.Capture(
+                            Path.Combine(shotDir, $"{elapsed.TotalSeconds:F0}s.png"));
+                        if (shot is not null) _log($"  скриншот: {shot}");
+                    }
+
+                    // Закрываем окно только когда оно явно показывает экран результатов.
+                    // Прежде мы закрывали вслепую по таймеру и обрывали тест на середине.
+                    if (!closeRequested && IsResultsScreen(title, elapsed))
+                    {
+                        _log($"Прошло {elapsed.TotalSeconds:F0} с, окно «{title}» — похоже на результаты, " +
+                             "прошу закрыть штатно, чтобы бенчмарк записал JSON.");
                         NativeInput.RequestClose(window);
                         closeRequested = true;
                     }
 
-                    // После запроса на закрытие кликать больше нельзя: окно может быть
-                    // экраном результатов, где есть кнопка «Пройти заново».
+                    // После запроса на закрытие кликать нельзя: если это экран результатов,
+                    // есть кнопка «Пройти заново».
                     if (!closeRequested)
                     {
                         MenuStep(window, step);
                         step++;
                     }
                 }
+            }
+            else
+            {
+                _log("  окно бенчмарка не найдено — ждём, пока появится");
             }
 
             if (NativeInput.IsMouseHeld) userTouchedMouse = true;
@@ -190,11 +214,25 @@ public sealed class BenchmarkRunner
 
         menuOk = false;
 
+        _log($"Скриншоты прогона: {shotDir}");
+
         if (userTouchedMouse)
             _log("ВНИМАНИЕ: во время прогона двигалась мышь — результат может быть недостоверным.");
 
         return null;
     }
+
+    /// <summary>
+    /// Похоже ли окно на экран результатов.
+    ///
+    /// Два признака: заголовок содержит «Benchmark» или «Result», и прошло достаточно
+    /// времени. Второе условие важно: сразу после запуска заголовок такой же, а тест
+    /// ещё не начинался.
+    /// </summary>
+    private static bool IsResultsScreen(string title, TimeSpan elapsed) =>
+        elapsed > MinimumRunDuration &&
+        (title.Contains("Result", StringComparison.OrdinalIgnoreCase) ||
+         title.Contains("Benchmark", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Шаги повторяются по кругу: пока тест не пошёл, лишние клики попадают в безобидные
