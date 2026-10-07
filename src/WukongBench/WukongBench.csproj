@@ -8,6 +8,9 @@
     <RollForward>LatestMajor</RollForward>
     <AssemblyName>WukongBench</AssemblyName>
     <RootNamespace>WukongBench</RootNamespace>
+    <!-- Хеш коммита попадает в метаданные сборки — печатается при запуске,
+         чтобы видеть, какая версия кода реально работает. -->
+    <IncludeSourceRevisionInInformationalVersion>true</IncludeSourceRevisionInInformationalVersion>
     <!-- System.Management (WMI) и Win32 P/Invoke работают только на Windows.
          Единый TFM, чтобы проект собирался на любой ОС и тестировался на mac. -->
     <NoWarn>$(NoWarn);CA1416</NoWarn>

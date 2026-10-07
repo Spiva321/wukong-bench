@@ -32,6 +32,7 @@ internal static class Program
         try
         {
             Log("=== WukongBench ===");
+            Log($"Версия: {BuildStamp.Version} ({BuildStamp.Commit})");
             Log($"Запуск {startedAt:yyyy-MM-dd HH:mm:ss}, система: {Environment.OSVersion}");
 
             var userPath = args.FirstOrDefault(a => !a.StartsWith('-'));
