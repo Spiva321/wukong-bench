@@ -30,16 +30,17 @@ public sealed class BenchmarkRunner
     public static readonly TimeSpan Timeout = TimeSpan.FromMinutes(20);
 
     /// <summary>
-    /// Прекратить кликать. К этому моменту тест должен закончиться и показаться экран
+    /// Прекратить кликать. К этому моменту тест заканчивается и появляется экран
     /// результатов, где есть кнопка «Пройти заново» — наши клики в неё попадать не должны.
     /// </summary>
-    private static readonly TimeSpan StopClickingAfter = TimeSpan.FromSeconds(200);
+    private static readonly TimeSpan StopClickingAfter = TimeSpan.FromSeconds(170);
 
     /// <summary>
-    /// Через сколько секунд просить окно закрыться. Тест идёт около 140 секунд по данным
-    /// кадров (проверено на реальном результате), плюс загрузка сцен и меню.
+    /// Аварийное закрытие окна. Нужно только если JSON так и не появился: бенчмарк
+    /// пишет результат сам, примерно на 206-й секунде, и к этому моменту мы уже вышли.
+    /// Если вдруг не вышли — закрываем, чтобы не висеть до таймаута.
     /// </summary>
-    private static readonly TimeSpan CloseAfter = TimeSpan.FromSeconds(260);
+    private static readonly TimeSpan CloseAfter = TimeSpan.FromSeconds(420);
 
     /// <summary>Сколько ждать JSON после отправки запроса на закрытие окна.</summary>
     private static readonly TimeSpan WaitForResultAfterClose = TimeSpan.FromSeconds(60);
@@ -153,6 +154,7 @@ public sealed class BenchmarkRunner
         var lastTitle = "";
         var shotDir = Path.Combine(Path.GetTempPath(), "wukongbench-shots", DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
         var lastShot = DateTime.MinValue;
+        var lastMissingWindowLog = DateTime.MinValue;
 
         while (DateTime.UtcNow < deadline)
         {
@@ -194,9 +196,9 @@ public sealed class BenchmarkRunner
                         _log("  " + DescribeResultsFolder());
                     }
 
-                    // JSON бенчмарк пишет при выходе из программы. Порядок обязателен:
-                    // дождаться конца теста → попросить окно закрыться → дождаться JSON.
-                    // Без запроса на закрытие JSON не появится никогда.
+                    // Бенчмарк пишет JSON сам, когда тест дошёл до конца (проверено на прогоне:
+                    // файл появился на 206-й секунде без всякого закрытия окна).
+                    // Закрываем только аварийно — если результат так и не появился.
                     if (!closeRequested && elapsed > CloseAfter)
                     {
                         _log($"Прошло {elapsed.TotalSeconds:F0} с — прошу окно закрыться штатно, " +
@@ -217,7 +219,12 @@ public sealed class BenchmarkRunner
             }
             else
             {
-                _log("  окно бенчмарка не найдено — ждём, пока появится");
+                // Не засоряем консоль: сообщение раз в 30 секунд, а не на каждой итерации.
+                if (DateTime.UtcNow - lastMissingWindowLog > TimeSpan.FromSeconds(30))
+                {
+                    lastMissingWindowLog = DateTime.UtcNow;
+                    _log("  окно бенчмарка не найдено — ждём, пока появится");
+                }
             }
 
             if (NativeInput.IsMouseHeld) userTouchedMouse = true;

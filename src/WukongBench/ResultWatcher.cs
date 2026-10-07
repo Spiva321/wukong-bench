@@ -14,6 +14,10 @@ namespace WukongBench;
 ///    JSON — это не ошибка, а «ещё рано». Поэтому повторяем попытки.
 ///
 /// 3. Бенчмарк может не ответить вовсе. Ждать вечно нельзя — нужен таймаут.
+///
+/// ⚠️ ВАЖНО: файлы результатов НЕ имеют расширения — бенчмарк создаёт их просто
+/// числом, например «1791400598». Поэтому перебираем все файлы папки без маски
+/// «*.json». С маской инструмент не увидел бы готовый результат и висел бы до таймаута.
 /// </summary>
 public sealed class ResultWatcher : IDisposable
 {
@@ -56,7 +60,7 @@ public sealed class ResultWatcher : IDisposable
             return;
         }
 
-        foreach (var path in Directory.EnumerateFiles(_directory, "*.json"))
+        foreach (var path in Directory.EnumerateFiles(_directory))
         {
             _knownBefore.Add(Path.GetFileName(path));
 
@@ -155,7 +159,7 @@ public sealed class ResultWatcher : IDisposable
 
         FileInfo? newest = null;
 
-        foreach (var path in Directory.EnumerateFiles(_directory, "*.json"))
+        foreach (var path in Directory.EnumerateFiles(_directory))
         {
             var name = Path.GetFileName(path);
 
@@ -177,7 +181,7 @@ public sealed class ResultWatcher : IDisposable
     /// <summary>Все результаты в папке, новые и старые — для отчёта и отладки.</summary>
     public IReadOnlyList<string> ListAll() =>
         Directory.Exists(_directory)
-            ? Directory.EnumerateFiles(_directory, "*.json")
+            ? Directory.EnumerateFiles(_directory)
                 .OrderByDescending(File.GetLastWriteTimeUtc)
                 .ToList()
             : [];
