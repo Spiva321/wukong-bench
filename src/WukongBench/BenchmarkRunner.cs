@@ -30,10 +30,11 @@ public sealed class BenchmarkRunner
     public static readonly TimeSpan Timeout = TimeSpan.FromMinutes(20);
 
     /// <summary>
-    /// Минимальное время до попытки закрыть окно. Тест идёт около 140 секунд по данным
-    /// кадров, плюс загрузка сцен и меню — раньше закрывать нельзя, иначе тест оборвётся.
+    /// Через сколько секунд просить окно закрыться. Тест идёт около 140 секунд по данным
+    /// кадров (проверено на реальном результате), плюс загрузка сцен и меню. Запас в 60
+    /// секунд: раньше закрывать нельзя — тест оборвётся и JSON не запишется.
     /// </summary>
-    private static readonly TimeSpan MinimumRunDuration = TimeSpan.FromSeconds(150);
+    private static readonly TimeSpan CloseAfter = TimeSpan.FromSeconds(300);
 
     private readonly string _resultsDir;
     private readonly Action<string> _log;
@@ -161,12 +162,12 @@ public sealed class BenchmarkRunner
             {
                 if (!NativeInput.IsForeground(window)) NativeInput.TryActivate(window);
 
-                // Заголовок окна меняется при смене экрана — это наш главный признак,
-                // что бенчмарк продвинулся дальше, а не застрял.
+                // Заголовок нужен только для диагностики: у бенчмарка он всегда «b1»
+                // и не меняется при смене экрана, так что опереться на него нельзя.
                 var title = NativeInput.GetWindowTitle(window);
                 if (title != lastTitle)
                 {
-                    _log($"  окно: {title}");
+                    _log($"  окно: {title} (заголовок не меняется — для диагностики)");
                     lastTitle = title;
                 }
 
@@ -174,21 +175,23 @@ public sealed class BenchmarkRunner
                 {
                     var elapsed = DateTime.UtcNow - runStart;
 
-                    // Диагностика: снимаем экран раз в 20 секунд, чтобы видеть, где застряли.
-                    if (DateTime.UtcNow - lastShot > TimeSpan.FromSeconds(20))
+                    // Диагностика: раз в 60 секунд снимаем экран и перечисляем папку результатов.
+                    if (DateTime.UtcNow - lastShot > TimeSpan.FromSeconds(60))
                     {
                         lastShot = DateTime.UtcNow;
                         var shot = ScreenCapture.Capture(
                             Path.Combine(shotDir, $"{elapsed.TotalSeconds:F0}s.png"));
                         if (shot is not null) _log($"  скриншот: {shot}");
+                        _log("  " + DescribeResultsFolder());
                     }
 
-                    // Закрываем окно только когда оно явно показывает экран результатов.
-                    // Прежде мы закрывали вслепую по таймеру и обрывали тест на середине.
-                    if (!closeRequested && IsResultsScreen(title, elapsed))
+                    // Закрываем окно только когда тест заведомо прошёл. Заголовок у бенчмарка
+                    // всегда «b1» и не меняется, поэтому ориентируемся на время: сам тест
+                    // длится около 140 секунд по данным кадров, плюс загрузка сцен.
+                    if (!closeRequested && elapsed > CloseAfter)
                     {
-                        _log($"Прошло {elapsed.TotalSeconds:F0} с, окно «{title}» — похоже на результаты, " +
-                             "прошу закрыть штатно, чтобы бенчмарк записал JSON.");
+                        _log($"Прошло {elapsed.TotalSeconds:F0} с — прошу окно закрыться штатно, " +
+                             "чтобы бенчмарк записал JSON.");
                         NativeInput.RequestClose(window);
                         closeRequested = true;
                     }
@@ -223,16 +226,19 @@ public sealed class BenchmarkRunner
     }
 
     /// <summary>
-    /// Похоже ли окно на экран результатов.
-    ///
-    /// Два признака: заголовок содержит «Benchmark» или «Result», и прошло достаточно
-    /// времени. Второе условие важно: сразу после запуска заголовок такой же, а тест
-    /// ещё не начинался.
+    /// Перечисляет содержимое папки результатов. Нужно для диагностики: показывает,
+    /// появился ли вообще JSON и в каком он состоянии.
     /// </summary>
-    private static bool IsResultsScreen(string title, TimeSpan elapsed) =>
-        elapsed > MinimumRunDuration &&
-        (title.Contains("Result", StringComparison.OrdinalIgnoreCase) ||
-         title.Contains("Benchmark", StringComparison.OrdinalIgnoreCase));
+    private string DescribeResultsFolder()
+    {
+        if (!Directory.Exists(_resultsDir)) return $"папки результатов нет: {_resultsDir}";
+
+        var files = Directory.EnumerateFiles(_resultsDir).ToList();
+        if (files.Count == 0) return $"в папке результатов пока пусто ({_resultsDir})";
+
+        var names = files.Select(Path.GetFileName).Take(3);
+        return $"в папке результатов {files.Count} файл(ов): {string.Join(", ", names)}";
+    }
 
     /// <summary>
     /// Шаги повторяются по кругу: пока тест не пошёл, лишние клики попадают в безобидные
