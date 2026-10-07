@@ -30,11 +30,19 @@ public sealed class BenchmarkRunner
     public static readonly TimeSpan Timeout = TimeSpan.FromMinutes(20);
 
     /// <summary>
-    /// Через сколько секунд просить окно закрыться. Тест идёт около 140 секунд по данным
-    /// кадров (проверено на реальном результате), плюс загрузка сцен и меню. Запас в 60
-    /// секунд: раньше закрывать нельзя — тест оборвётся и JSON не запишется.
+    /// Прекратить кликать. К этому моменту тест должен закончиться и показаться экран
+    /// результатов, где есть кнопка «Пройти заново» — наши клики в неё попадать не должны.
     /// </summary>
-    private static readonly TimeSpan CloseAfter = TimeSpan.FromSeconds(300);
+    private static readonly TimeSpan StopClickingAfter = TimeSpan.FromSeconds(200);
+
+    /// <summary>
+    /// Через сколько секунд просить окно закрыться. Тест идёт около 140 секунд по данным
+    /// кадров (проверено на реальном результате), плюс загрузка сцен и меню.
+    /// </summary>
+    private static readonly TimeSpan CloseAfter = TimeSpan.FromSeconds(260);
+
+    /// <summary>Сколько ждать JSON после отправки запроса на закрытие окна.</summary>
+    private static readonly TimeSpan WaitForResultAfterClose = TimeSpan.FromSeconds(60);
 
     private readonly string _resultsDir;
     private readonly Action<string> _log;
@@ -141,6 +149,7 @@ public sealed class BenchmarkRunner
         var step = 0;
         var userTouchedMouse = false;
         var closeRequested = false;
+        var closeRequestedAt = DateTime.MinValue;
         var lastTitle = "";
         var shotDir = Path.Combine(Path.GetTempPath(), "wukongbench-shots", DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
         var lastShot = DateTime.MinValue;
@@ -185,20 +194,21 @@ public sealed class BenchmarkRunner
                         _log("  " + DescribeResultsFolder());
                     }
 
-                    // Закрываем окно только когда тест заведомо прошёл. Заголовок у бенчмарка
-                    // всегда «b1» и не меняется, поэтому ориентируемся на время: сам тест
-                    // длится около 140 секунд по данным кадров, плюс загрузка сцен.
+                    // JSON бенчмарк пишет при выходе из программы. Порядок обязателен:
+                    // дождаться конца теста → попросить окно закрыться → дождаться JSON.
+                    // Без запроса на закрытие JSON не появится никогда.
                     if (!closeRequested && elapsed > CloseAfter)
                     {
                         _log($"Прошло {elapsed.TotalSeconds:F0} с — прошу окно закрыться штатно, " +
                              "чтобы бенчмарк записал JSON.");
                         NativeInput.RequestClose(window);
                         closeRequested = true;
+                        closeRequestedAt = DateTime.UtcNow;
                     }
 
-                    // После запроса на закрытие кликать нельзя: если это экран результатов,
-                    // есть кнопка «Пройти заново».
-                    if (!closeRequested)
+                    // Кликаем только пока идёт тест. После его окончания на экране есть
+                    // кнопка «Пройти заново», и наши клики могли бы запустить тест заново.
+                    if (!closeRequested && elapsed < StopClickingAfter)
                     {
                         MenuStep(window, step);
                         step++;
@@ -212,6 +222,19 @@ public sealed class BenchmarkRunner
 
             if (NativeInput.IsMouseHeld) userTouchedMouse = true;
 
+            // Мы попросили окно закрыться, а JSON всё не появился — окно, скорее всего,
+            // не закрылось. Повторяем запрос: WM_CLOSE игнорируется, если на экране
+            // диалог с вопросом.
+            if (closeRequested &&
+                DateTime.UtcNow - closeRequestedAt > WaitForResultAfterClose &&
+                watcher.TryTakeNew(out _, out _) == false &&
+                window != IntPtr.Zero)
+            {
+                _log("JSON не появился — повторно прошу окно закрыться.");
+                NativeInput.RequestClose(window);
+                closeRequestedAt = DateTime.UtcNow;
+            }
+
             Thread.Sleep(StepDelay);
         }
 
@@ -222,6 +245,7 @@ public sealed class BenchmarkRunner
         if (userTouchedMouse)
             _log("ВНИМАНИЕ: во время прогона двигалась мышь — результат может быть недостоверным.");
 
+        ReportResultsFolderOnFailure();
         return null;
     }
 
@@ -238,6 +262,19 @@ public sealed class BenchmarkRunner
 
         var names = files.Select(Path.GetFileName).Take(3);
         return $"в папке результатов {files.Count} файл(ов): {string.Join(", ", names)}";
+    }
+
+    /// <summary>
+    /// Диагностика после провала: что реально лежит в папке результатов.
+    /// Помогает понять, записал бенчмарк файл или нет.
+    /// </summary>
+    private void ReportResultsFolderOnFailure()
+    {
+        _log("");
+        _log($"Итог: {DescribeResultsFolder()}");
+        _log($"Ожидаемое место: {_resultsDir}");
+        _log("Бенчмарк пишет JSON при выходе из программы. Если файл появился, но не прочитался —");
+        _log("значит он был дописан не полностью.");
     }
 
     /// <summary>
